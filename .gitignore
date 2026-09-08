@@ -1,0 +1,33 @@
+myenv/
+venv/
+
+__pycache__/
+
+*.jpg
+*.png
+*.jpeg
+*.pdf
+
+# temperory experiment file and folders
+temp_exp*.py
+temp_exp/
+
+# Environment variables
+*.env
+
+# Practice
+*_practice/
+*_prac/
+
+# VS code
+.vscode/
+
+# cProfile
+*.prof
+
+# Pickle files
+*.pkl
+
+# numpy files
+*.npy
+*.npz
