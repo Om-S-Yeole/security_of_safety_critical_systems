@@ -1,0 +1,7 @@
+model_weights_path: ./runs/detect/runs/yolov8m_baseline/weights/best.pt
+
+validate_configs:
+  data: ./src/object_detector/configs/dataset.yaml
+  split: val
+  imgsz: 640
+  device: 0
