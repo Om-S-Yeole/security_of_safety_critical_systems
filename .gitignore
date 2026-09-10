@@ -31,3 +31,14 @@ temp_exp/
 # numpy files
 *.npy
 *.npz
+
+# Data
+project_data/
+about/
+
+# PyTorch file
+*.pt
+
+# Ultranalytics
+weights/
+runs/
