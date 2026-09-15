@@ -19,7 +19,7 @@ TRAIN_IMAGES_DIR = DATASET_ROOT / "train" / "images"
 TRAIN_LABELS_DIR = DATASET_ROOT / "train" / "labels"
 
 KFOLD_ROOT = Path("./project_data/kfold")
-RUNS_ROOT = Path("./runs/kfold")
+RUNS_ROOT = Path("./runs/detect/runs/detect/runs/kfold/")
 
 # Output files
 CSV_RESULTS_PATH = RUNS_ROOT / "kfold_results.csv"
