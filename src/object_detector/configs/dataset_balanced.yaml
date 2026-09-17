@@ -1,0 +1,10 @@
+path: ./project_data/balanced_split/
+
+train: train/images/
+val: validation/images/
+
+names:
+  0: Aircraft
+  1: Building
+  2: Truck
+  3: Tank
