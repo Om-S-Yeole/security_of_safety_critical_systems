@@ -1,7 +1,7 @@
 train_configs:
   data: ./src/object_detector/configs/dataset.yaml
   epochs: 30
-  imgsz: 640
+  imgsz: 768
   batch: -1
   device: 0
   workers: 8
