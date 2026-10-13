@@ -1,0 +1,135 @@
+project:
+  name: "yolov8_dpatch_eot"
+  seed: 42
+  device: "cuda:0"
+  output_dir: "attacker/experiments/run_002"
+
+# ------------------------------------------------------------
+# Trained Object Detector
+# ------------------------------------------------------------
+detector:
+  model_path: "detector/weights/best.pt"
+  image_size: 875
+  confidence_threshold: 0.60
+  iou_threshold: 0.70
+
+  # Detector weights remain fixed during patch optimization.
+  freeze_weights: true
+
+# ------------------------------------------------------------
+# Dataset
+# ------------------------------------------------------------
+dataset:
+  # Change these paths to match your actual dataset structure.
+  train_images: "project_data/balanced_split/train/images"
+  train_labels: "project_data/balanced_split/train/labels"
+
+  val_images: "project_data/balanced_split/validation/images"
+  val_labels: "project_data/balanced_split/validation/labels"
+
+  test_images: "project_data/balanced_split/test/images"
+  test_labels: "project_data/balanced_split/test/labels"
+
+  annotation_format: "yolo"
+  num_classes: 4
+
+  class_names:
+    - "Aircraft"
+    - "Building"
+    - "Truck"
+    - "Tank"
+
+  # The actual number of target objects may vary per image.
+  shuffle: true
+  num_workers: 4
+
+# ------------------------------------------------------------
+# Attack Definition
+# ------------------------------------------------------------
+attack:
+  method: "dpatch"
+  objective: "object_disappearance"
+  patch_type: "universal"
+  patch_placement: "on_object"
+
+  # Initial patch dimensions, in pixels.
+  patch:
+    height: 28
+    width: 28
+    initialization: "uniform"
+    min_pixel_value: 0.0
+    max_pixel_value: 1.0
+
+  # Target objects belonging to the four dataset classes.
+  target_classes: [0, 1, 2, 3]
+
+# ------------------------------------------------------------
+# Patch Optimization
+# ------------------------------------------------------------
+optimization:
+  learning_rate: 0.01
+  optimizer: "Adam"
+  batch_size: 4
+  num_epochs: 2
+
+  # Save a checkpoint periodically.
+  save_every_epochs: 5
+
+  # Numerical safeguards.
+  gradient_clip_norm: 1.0
+
+# ------------------------------------------------------------
+# Expectation over Transformation (EOT)
+# ------------------------------------------------------------
+eot:
+  enabled: true
+  samples_per_image: 4
+
+  rotation:
+    enabled: true
+    min_degrees: -30.0
+    max_degrees: 30.0
+
+  scaling:
+    enabled: true
+    min_scale: 0.75
+    max_scale: 1.25
+
+  brightness:
+    enabled: true
+    min_factor: 0.70
+    max_factor: 1.30
+
+  perspective:
+    enabled: true
+    distortion_scale: 0.10
+
+# ------------------------------------------------------------
+# Evaluation
+# ------------------------------------------------------------
+evaluation:
+  confidence_threshold: 0.60
+  iou_threshold: 0.50
+
+  evaluate_clean_images: true
+  evaluate_transformed_images: true
+  visualization:
+    # Save paired clean/attacked detector outputs after final validation.
+    num_images: 5
+
+  report:
+    - "precision"
+    - "recall"
+    - "mAP50"
+    - "mAP50_95"
+    - "attack_success_rate"
+
+# ------------------------------------------------------------
+# Logging and Checkpoints
+# ------------------------------------------------------------
+logging:
+  log_every_steps: 10
+  save_patch_images: true
+  save_training_curves: true
+  save_metrics_json: true
+  save_config_copy: true
