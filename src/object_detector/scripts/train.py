@@ -7,7 +7,7 @@ from src.helpers import load_yaml
 # ===============================================================================
 # Load the YAML
 # ===============================================================================
-TRAINING_YAML_PATH = Path("./src/object_detector/configs/train.yaml")
+TRAINING_YAML_PATH = Path("./src/object_detector/configs/train_balanced.yaml")
 training_configs = load_yaml(TRAINING_YAML_PATH)
 
 # ===============================================================================

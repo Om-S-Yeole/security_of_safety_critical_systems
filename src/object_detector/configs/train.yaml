@@ -1,9 +1,11 @@
 train_configs:
   data: ./src/object_detector/configs/dataset.yaml
-  epochs: 30
-  imgsz: 768
+  epochs: 25
+  imgsz: 875
   batch: -1
   device: 0
   workers: 8
   project: runs
-  name: yolov8m_baseline
+  name: yolov8m_baseline_7
+
+# Current best: yolov8m_baseline_6

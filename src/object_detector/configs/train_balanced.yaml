@@ -1,9 +1,9 @@
 train_configs:
   data: ./src/object_detector/configs/dataset_balanced.yaml
-  epochs: 30
-  imgsz: 768
+  epochs: 25
+  imgsz: 875
   batch: -1
   device: 0
   workers: 8
   project: runs
-  name: yolov8m_balanced_validation
+  name: balanced_1

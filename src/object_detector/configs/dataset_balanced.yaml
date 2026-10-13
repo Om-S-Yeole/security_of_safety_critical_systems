@@ -2,6 +2,7 @@ path: ./project_data/balanced_split/
 
 train: train/images/
 val: validation/images/
+test: test/images/
 
 names:
   0: Aircraft
