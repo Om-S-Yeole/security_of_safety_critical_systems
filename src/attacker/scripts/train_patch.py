@@ -6,6 +6,7 @@ import torch
 import yaml
 from PIL import Image, ImageDraw
 from torch.optim import Adam
+from torchvision.transforms.functional import to_pil_image
 from tqdm import tqdm
 
 from src.attacker.scripts.dataset import create_dataloader
@@ -29,9 +30,14 @@ def paste_patch_differentiable(
     boxes_list: list[torch.Tensor],
     eot_transform: ImageEOT,
     samples_per_image: int = 1,
+    patch_coverage: float = 0.5,
 ) -> torch.Tensor:
     """
-    Differentiably paste EOT-transformed patches onto target bounding box regions.
+    Differentiably paste EOT-transformed patches onto target bounding boxes.
+
+    The patch is scaled to fit within ``patch_coverage`` of both bounding-box
+    dimensions and is randomly positioned within the box. This keeps the
+    remainder of each object visible while making the patch size object-aware.
 
     Parameters
     ----------
@@ -45,12 +51,18 @@ def paste_patch_differentiable(
         EOT augmentation engine.
     samples_per_image : int
         Number of augmented patch variations sampled per bounding box.
+    patch_coverage : float
+        Maximum fraction of each bounding-box dimension occupied by the patch.
+        Must be in ``(0, 1]``.
 
     Returns
     -------
     patched_images : torch.Tensor
         Batch of images with patches applied, retaining gradient tracking for `patch`.
     """
+    if not 0.0 < patch_coverage <= 1.0:
+        raise ValueError("patch_coverage must be in the range (0, 1].")
+
     batch_size, _, img_h, img_w = images.shape
     patched_images = images.clone()
 
@@ -68,23 +80,57 @@ def paste_patch_differentiable(
                 )
             )
 
-            box_w = max(1, x2 - x1)
-            box_h = max(1, y2 - y1)
+            box_x1 = max(0, min(img_w, x1))
+            box_y1 = max(0, min(img_h, y1))
+            box_x2 = max(0, min(img_w, x2))
+            box_y2 = max(0, min(img_h, y2))
+            box_w = max(1, box_x2 - box_x1)
+            box_h = max(1, box_y2 - box_y1)
+
+            patch_height, patch_width = patch.shape[-2:]
+            scale = min(
+                box_w * patch_coverage / patch_width,
+                box_h * patch_coverage / patch_height,
+            )
+            patch_w = max(1, min(box_w, round(patch_width * scale)))
+            patch_h = max(1, min(box_h, round(patch_height * scale)))
 
             for _ in range(samples_per_image):
                 # 1. Apply geometric and appearance transformations to patch
                 transformed_patch = eot_transform(patch)  # Shape: [1, C, P_H, P_W]
 
-                # 2. Resize patch to fit the target bounding box area
+                # 2. Resize patch to a fraction of the target box, preserving
+                # its aspect ratio rather than covering the whole object.
                 resized_patch = torch.nn.functional.interpolate(
                     transformed_patch,
-                    size=(box_h, box_w),
+                    size=(patch_h, patch_w),
                     mode="bilinear",
                     align_corners=False,
-                ).squeeze(0)  # Shape: [C, box_h, box_w]
+                ).squeeze(0)  # Shape: [C, patch_h, patch_w]
 
-                # 3. Differentiably blend/paste into target image canvas
-                patched_images[b_idx, :, y1:y2, x1:x2] = resized_patch
+                # 3. Randomly place the patch fully inside the object box.
+                max_x_offset = box_w - patch_w
+                max_y_offset = box_h - patch_h
+                x_offset = (
+                    int(torch.randint(max_x_offset + 1, (), device=images.device))
+                    if max_x_offset
+                    else 0
+                )
+                y_offset = (
+                    int(torch.randint(max_y_offset + 1, (), device=images.device))
+                    if max_y_offset
+                    else 0
+                )
+                patch_x1 = box_x1 + x_offset
+                patch_y1 = box_y1 + y_offset
+
+                # Differentiably blend/paste into target image canvas.
+                patched_images[
+                    b_idx,
+                    :,
+                    patch_y1 : patch_y1 + patch_h,
+                    patch_x1 : patch_x1 + patch_w,
+                ] = resized_patch
 
     return patched_images
 
@@ -121,7 +167,7 @@ def compute_object_disappearance_loss(
 
     # Penalize scores that exceed the confidence threshold (hinge loss formulation)
     penalty = torch.relu(probs - confidence_threshold)
-    loss = torch.mean(penalty ** 2)
+    loss = torch.mean(penalty**2)
 
     return loss
 
@@ -136,6 +182,7 @@ def evaluate_patch(
     eot_transform: ImageEOT,
     samples_per_image: int,
     device: str,
+    patch_coverage: float = 0.5,
 ) -> dict[str, float]:
     """Evaluate a patch on a dataset without updating its parameters."""
     total_loss = 0.0
@@ -152,6 +199,7 @@ def evaluate_patch(
             boxes_list=boxes_list,
             eot_transform=eot_transform,
             samples_per_image=samples_per_image,
+            patch_coverage=patch_coverage,
         )
 
         raw_predictions = model(patched_images)
@@ -169,9 +217,9 @@ def evaluate_patch(
 
         total_loss += loss.item()
         total_target_confidence += target_probabilities.mean().item()
-        total_max_target_confidence += target_probabilities.amax(
-            dim=(1, 2)
-        ).mean().item()
+        total_max_target_confidence += (
+            target_probabilities.amax(dim=(1, 2)).mean().item()
+        )
         batch_count += 1
 
     if batch_count == 0:
@@ -198,20 +246,18 @@ def _draw_ground_truth(
     for box, label in zip(boxes.tolist(), labels.tolist()):
         x1, y1, x2, y2 = (
             coordinate * dimension
-            for coordinate, dimension in zip(
-                box, (width, height, width, height)
-            )
+            for coordinate, dimension in zip(box, (width, height, width, height))
         )
-        class_name = (
-            class_names[label] if 0 <= label < len(class_names) else str(label)
-        )
+        class_name = class_names[label] if 0 <= label < len(class_names) else str(label)
         draw.rectangle((x1, y1, x2, y2), outline="lime", width=3)
         draw.text((x1, max(0, y1 - 18)), f"GT: {class_name}", fill="lime")
 
     return annotated
 
 
-def _detector_output_image(detector: YOLOv8Detector, image: torch.Tensor) -> Image.Image:
+def _detector_output_image(
+    detector: YOLOv8Detector, image: torch.Tensor
+) -> Image.Image:
     """Run detector inference and convert Ultralytics annotations to a PIL image."""
     results = detector.model.predict(
         source=image.unsqueeze(0),
@@ -236,6 +282,7 @@ def save_validation_visualizations(
     class_names: list[str],
     device: str,
     max_images: int = 5,
+    patch_coverage: float = 0.5,
 ) -> list[dict[str, str]]:
     """Save clean and attacked detector outputs for validation examples."""
     if max_images <= 0:
@@ -255,6 +302,7 @@ def save_validation_visualizations(
             boxes_list=boxes_list,
             eot_transform=eot_transform,
             samples_per_image=samples_per_image,
+            patch_coverage=patch_coverage,
         )
 
         for index, (image, patched_image, boxes, labels) in enumerate(
@@ -274,9 +322,7 @@ def save_validation_visualizations(
             attacked_image = _detector_output_image(detector, patched_image)
 
             clean_path = visualization_dir / f"image_{image_number:03d}_clean.png"
-            attacked_path = (
-                visualization_dir / f"image_{image_number:03d}_attacked.png"
-            )
+            attacked_path = visualization_dir / f"image_{image_number:03d}_attacked.png"
             clean_image.save(clean_path)
             attacked_image.save(attacked_path)
             saved_images.append(
@@ -293,11 +339,237 @@ def save_validation_visualizations(
     return saved_images
 
 
+@torch.no_grad()
+def export_attacked_validation_set(
+    patch_module: UniversalPatch,
+    validation_loader,
+    eot_transform: ImageEOT,
+    samples_per_image: int,
+    patch_coverage: float,
+    source_images_dir: str,
+    source_labels_dir: str,
+    output_dir: Path,
+    class_names: list[str],
+    device: str,
+) -> Path:
+    """Export every attacked validation image and its YOLO labels."""
+    attacked_root = output_dir / "attacked_validation"
+    images_dir = attacked_root / "images"
+    labels_dir = attacked_root / "labels"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    labels_dir.mkdir(parents=True, exist_ok=True)
+
+    source_images_root = Path(source_images_dir).resolve()
+    source_labels_root = Path(source_labels_dir).resolve()
+
+    for batch in validation_loader:
+        images = batch["images"].to(device, non_blocking=True)
+        boxes_list = [b.to(device, non_blocking=True) for b in batch["boxes"]]
+        patched_images = paste_patch_differentiable(
+            images=images,
+            patch=patch_module(),
+            boxes_list=boxes_list,
+            eot_transform=eot_transform,
+            samples_per_image=samples_per_image,
+            patch_coverage=patch_coverage,
+        )
+
+        for index, (patched_image, boxes, labels) in enumerate(
+            zip(patched_images, boxes_list, batch["labels"])
+        ):
+            source_image_path = Path(batch["image_paths"][index]).resolve()
+            relative_path = source_image_path.relative_to(source_images_root)
+            output_image_path = (images_dir / relative_path).with_suffix(".png")
+            output_label_path = labels_dir / relative_path.with_suffix(".txt")
+            output_image_path.parent.mkdir(parents=True, exist_ok=True)
+            output_label_path.parent.mkdir(parents=True, exist_ok=True)
+
+            to_pil_image(patched_image.cpu().clamp(0.0, 1.0)).save(output_image_path)
+
+            source_label_path = source_labels_root / relative_path.with_suffix(".txt")
+            if not source_label_path.is_file():
+                raise FileNotFoundError(
+                    f"Validation label file not found: {source_label_path}"
+                )
+
+            with output_label_path.open("w", encoding="utf-8") as label_file:
+                for box, label in zip(boxes.cpu().tolist(), labels.tolist()):
+                    x1, y1, x2, y2 = box
+                    box_width = x2 - x1
+                    box_height = y2 - y1
+                    x_center = x1 + box_width / 2.0
+                    y_center = y1 + box_height / 2.0
+                    label_file.write(
+                        f"{label} {x_center:.6f} {y_center:.6f} "
+                        f"{box_width:.6f} {box_height:.6f}\n"
+                    )
+
+    dataset_yaml_path = attacked_root / "dataset.yaml"
+    dataset_config = {
+        "path": str(attacked_root.resolve()),
+        "train": "images",
+        "val": "images",
+        "names": class_names,
+    }
+    with dataset_yaml_path.open("w", encoding="utf-8") as dataset_file:
+        yaml.safe_dump(dataset_config, dataset_file, sort_keys=False)
+
+    return dataset_yaml_path
+
+
+def validate_attacked_validation_set(
+    detector: YOLOv8Detector,
+    dataset_yaml_path: Path,
+    output_dir: Path,
+) -> dict[str, float]:
+    """Run Ultralytics' native validation and return its scalar metrics."""
+    metrics = detector.model.val(
+        data=str(dataset_yaml_path),
+        split="val",
+        imgsz=detector.image_size,
+        device=detector.device,
+        project=str(output_dir / "ultralytics_validation"),
+        name="attacked",
+        exist_ok=True,
+    )
+    return {
+        key: float(value)
+        for key, value in metrics.results_dict.items()
+        if isinstance(value, (int, float))
+    }
+
+
+def _box_iou_xyxy(
+    first: tuple[float, float, float, float],
+    second: list[float],
+) -> float:
+    """Calculate IoU between two boxes in xyxy pixel coordinates."""
+    first_x1, first_y1, first_x2, first_y2 = first
+    second_x1, second_y1, second_x2, second_y2 = second
+    intersection_width = max(0.0, min(first_x2, second_x2) - max(first_x1, second_x1))
+    intersection_height = max(0.0, min(first_y2, second_y2) - max(first_y1, second_y1))
+    intersection = intersection_width * intersection_height
+    first_area = max(0.0, first_x2 - first_x1) * max(0.0, first_y2 - first_y1)
+    second_area = max(0.0, second_x2 - second_x1) * max(0.0, second_y2 - second_y1)
+    union = first_area + second_area - intersection
+    return intersection / union if union > 0.0 else 0.0
+
+
+def evaluate_attack_success_rate(
+    detector: YOLOv8Detector,
+    dataset_yaml_path: Path,
+    confidence_threshold: float,
+    iou_threshold: float,
+) -> dict[str, float | int]:
+    """
+    Evaluate object-level attack success on exported attacked images.
+
+    A ground-truth object is counted as successfully attacked when no
+    same-class prediction has both confidence >= ``confidence_threshold`` and
+    IoU >= ``iou_threshold``. Therefore, missed, misclassified, and
+    low-confidence detections count as successful attacks.
+    """
+    dataset_config = load_config(str(dataset_yaml_path))
+    dataset_root = Path(dataset_config["path"])
+    images_root = dataset_root / dataset_config["val"]
+    labels_root = dataset_root / "labels"
+    image_paths = sorted(path for path in images_root.rglob("*") if path.is_file())
+    if not image_paths:
+        raise RuntimeError(f"No attacked validation images found in {images_root}")
+
+    total_objects = 0
+    successful_objects = 0
+    successful_images = 0
+
+    if detector.device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    for image_path in tqdm(
+        image_paths,
+        desc="Evaluating attack success",
+        unit="image",
+    ):
+        # Predict one image at a time. Passing the complete validation list to
+        # Ultralytics can create a large temporary batch after model.val().
+        predictions = detector.predict(
+            source=str(image_path),
+            confidence_threshold=0.0,
+        )
+        if len(predictions) != 1:
+            raise RuntimeError(
+                f"Detector returned {len(predictions)} predictions for {image_path}."
+            )
+        prediction = predictions[0]
+
+        with Image.open(image_path) as image:
+            image_width, image_height = image.size
+        label_path = labels_root / image_path.relative_to(images_root).with_suffix(
+            ".txt"
+        )
+        if not label_path.is_file():
+            raise FileNotFoundError(
+                f"Attacked validation label not found: {label_path}"
+            )
+
+        image_success = True
+        with label_path.open("r", encoding="utf-8") as label_file:
+            labels = [line.split() for line in label_file if line.strip()]
+
+        for values in labels:
+            if len(values) != 5:
+                raise ValueError(
+                    f"Invalid YOLO label in {label_path}: {' '.join(values)}"
+                )
+            class_id = int(values[0])
+            x_center, y_center, box_width, box_height = (
+                float(value) for value in values[1:]
+            )
+            ground_truth_box = (
+                (x_center - box_width / 2.0) * image_width,
+                (y_center - box_height / 2.0) * image_height,
+                (x_center + box_width / 2.0) * image_width,
+                (y_center + box_height / 2.0) * image_height,
+            )
+            total_objects += 1
+
+            has_successful_detection = any(
+                predicted_class == class_id
+                and score >= confidence_threshold
+                and _box_iou_xyxy(ground_truth_box, predicted_box) >= iou_threshold
+                for predicted_box, score, predicted_class in zip(
+                    prediction["boxes"],
+                    prediction["scores"],
+                    prediction["class_ids"],
+                )
+            )
+            if not has_successful_detection:
+                successful_objects += 1
+            else:
+                image_success = False
+
+        if image_success:
+            successful_images += 1
+
+    if total_objects == 0:
+        raise RuntimeError("Attacked validation labels contain no objects.")
+
+    return {
+        "attack_success_rate": successful_objects / total_objects,
+        "successful_objects": successful_objects,
+        "total_objects": total_objects,
+        "image_attack_success_rate": successful_images / len(image_paths),
+        "successful_images": successful_images,
+        "total_images": len(image_paths),
+        "confidence_threshold": confidence_threshold,
+        "iou_threshold": iou_threshold,
+    }
+
+
 def train_dpatch(config_path: str) -> None:
     # 1. Configuration & Directories Setup
     cfg = load_config(config_path)
     device = cfg["project"].get("device", "cuda:0")
-    output_dir = Path(cfg["project"]["output_dir"])
+    output_dir = Path(cfg["project"]["output_dir"]).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save a copy of the configuration for experiment tracking
@@ -363,7 +635,9 @@ def train_dpatch(config_path: str) -> None:
         brightness_min=eot_cfg_dict.get("brightness", {}).get("min_factor", 0.70),
         brightness_max=eot_cfg_dict.get("brightness", {}).get("max_factor", 1.30),
         perspective_enabled=eot_cfg_dict.get("perspective", {}).get("enabled", True),
-        perspective_distortion=eot_cfg_dict.get("perspective", {}).get("distortion_scale", 0.10),
+        perspective_distortion=eot_cfg_dict.get("perspective", {}).get(
+            "distortion_scale", 0.10
+        ),
     )
     eot_transform = ImageEOT(config=eot_config, seed=cfg["project"].get("seed", 42))
 
@@ -378,6 +652,7 @@ def train_dpatch(config_path: str) -> None:
     conf_thresh = cfg["evaluation"]["confidence_threshold"]
     grad_clip = cfg["optimization"].get("gradient_clip_norm", 1.0)
     samples_per_image = eot_cfg_dict.get("samples_per_image", 1)
+    patch_coverage = patch_cfg.get("coverage", 0.5)
     validation_metrics: list[dict[str, float | int]] = []
     best_validation_loss = float("inf")
     best_epoch = 0
@@ -410,6 +685,7 @@ def train_dpatch(config_path: str) -> None:
                 boxes_list=boxes_list,
                 eot_transform=eot_transform,
                 samples_per_image=samples_per_image,
+                patch_coverage=patch_coverage,
             )
 
             # Extract model head predictions
@@ -451,6 +727,7 @@ def train_dpatch(config_path: str) -> None:
             confidence_threshold=conf_thresh,
             eot_transform=eot_transform,
             samples_per_image=samples_per_image,
+            patch_coverage=patch_coverage,
             device=device,
         )
         epoch_validation_record: dict[str, float | int] = {
@@ -499,6 +776,7 @@ def train_dpatch(config_path: str) -> None:
         confidence_threshold=conf_thresh,
         eot_transform=eot_transform,
         samples_per_image=samples_per_image,
+        patch_coverage=patch_coverage,
         device=device,
     )
     visualization_cfg = cfg.get("evaluation", {}).get("visualization", {})
@@ -508,10 +786,43 @@ def train_dpatch(config_path: str) -> None:
         validation_loader=validation_loader,
         eot_transform=eot_transform,
         samples_per_image=samples_per_image,
+        patch_coverage=patch_coverage,
         output_dir=output_dir,
         class_names=cfg["dataset"]["class_names"],
         device=device,
         max_images=visualization_cfg.get("num_images", 5),
+    )
+    attacked_dataset_yaml = export_attacked_validation_set(
+        patch_module=patch_module,
+        validation_loader=validation_loader,
+        eot_transform=eot_transform,
+        samples_per_image=1,
+        patch_coverage=patch_coverage,
+        source_images_dir=cfg["dataset"]["val_images"],
+        source_labels_dir=cfg["dataset"]["val_labels"],
+        output_dir=output_dir,
+        class_names=cfg["dataset"]["class_names"],
+        device=device,
+    )
+    attacked_validation_metrics = validate_attacked_validation_set(
+        detector=detector,
+        dataset_yaml_path=attacked_dataset_yaml,
+        output_dir=output_dir,
+    )
+    attack_success_metrics = evaluate_attack_success_rate(
+        detector=detector,
+        dataset_yaml_path=attacked_dataset_yaml,
+        confidence_threshold=cfg["evaluation"]["confidence_threshold"],
+        iou_threshold=cfg["evaluation"]["iou_threshold"],
+    )
+    print(f"Attacked validation dataset saved to: {attacked_dataset_yaml.parent}")
+    print(
+        f"Attack Success Rate (object-level): "
+        f"{attack_success_metrics['attack_success_rate']:.4f}"
+    )
+    print(
+        f"Successful objects: {attack_success_metrics['successful_objects']} / "
+        f"{attack_success_metrics['total_objects']}"
     )
     final_metrics = {
         "best_epoch": best_epoch,
@@ -519,6 +830,9 @@ def train_dpatch(config_path: str) -> None:
         "final_validation": final_validation,
         "epochs": validation_metrics,
         "validation_visualizations": visualization_images,
+        "attacked_validation_dataset": str(attacked_dataset_yaml.parent),
+        "attacked_validation_metrics": attacked_validation_metrics,
+        "attack_success_metrics": attack_success_metrics,
     }
     metrics_path = output_dir / "validation_metrics.json"
     with metrics_path.open("w", encoding="utf-8") as file:
@@ -538,7 +852,9 @@ def train_dpatch(config_path: str) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train DPatch with EOT against YOLOv8m.")
+    parser = argparse.ArgumentParser(
+        description="Train DPatch with EOT against YOLOv8m."
+    )
     parser.add_argument(
         "--config",
         type=str,

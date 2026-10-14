@@ -8,9 +8,7 @@ from torchvision.transforms import functional as TF
 
 ImageFile.LOAD_TRUNCATED_IMAGES = False
 
-SUPPORTED_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"
-}
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 class YOLODetectionDataset(Dataset):
@@ -39,14 +37,10 @@ class YOLODetectionDataset(Dataset):
         self.strict = strict
 
         if not self.images_dir.is_dir():
-            raise FileNotFoundError(
-                f"Image directory not found: {self.images_dir}"
-            )
+            raise FileNotFoundError(f"Image directory not found: {self.images_dir}")
 
         if not self.labels_dir.is_dir():
-            raise FileNotFoundError(
-                f"Label directory not found: {self.labels_dir}"
-            )
+            raise FileNotFoundError(f"Label directory not found: {self.labels_dir}")
 
         if image_size is not None and image_size <= 0:
             raise ValueError("image_size must be positive or None.")
@@ -57,25 +51,19 @@ class YOLODetectionDataset(Dataset):
         self.image_paths = sorted(
             path
             for path in self.images_dir.rglob("*")
-            if path.is_file()
-            and path.suffix.lower() in SUPPORTED_EXTENSIONS
+            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
         )
 
         if not self.image_paths:
-            raise RuntimeError(
-                f"No supported images found in {self.images_dir}"
-            )
+            raise RuntimeError(f"No supported images found in {self.images_dir}")
 
         # Check annotation availability before training/evaluation.
         missing_labels = [
-            path for path in self.image_paths
-            if not self._label_path(path).is_file()
+            path for path in self.image_paths if not self._label_path(path).is_file()
         ]
 
         if missing_labels and strict:
-            examples = "\n".join(
-                str(path) for path in missing_labels[:5]
-            )
+            examples = "\n".join(str(path) for path in missing_labels[:5])
             raise FileNotFoundError(
                 f"{len(missing_labels)} images have no label file. "
                 "If empty-label images are intentional, set strict=False.\n"
@@ -265,7 +253,10 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        persistent_workers=(num_workers > 0),
+        # Do not keep worker processes alive after an iterator is exhausted.
+        # This avoids atexit cleanup races when training creates several
+        # iterators over the same loaders.
+        persistent_workers=False,
         collate_fn=detection_collate_fn,
     )
 

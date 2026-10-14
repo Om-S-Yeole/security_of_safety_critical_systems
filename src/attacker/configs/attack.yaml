@@ -2,7 +2,7 @@ project:
   name: "yolov8_dpatch_eot"
   seed: 42
   device: "cuda:0"
-  output_dir: "attacker/experiments/run_002"
+  output_dir: "attacker/experiments/run_001"
 
 # ------------------------------------------------------------
 # Trained Object Detector
@@ -54,8 +54,11 @@ attack:
 
   # Initial patch dimensions, in pixels.
   patch:
-    height: 28
-    width: 28
+    height: 150
+    width: 150
+    # Scale each patch to at most this fraction of the target box dimensions.
+    # The patch is then randomly placed within the box.
+    coverage: 0.15
     initialization: "uniform"
     min_pixel_value: 0.0
     max_pixel_value: 1.0
@@ -70,7 +73,7 @@ optimization:
   learning_rate: 0.01
   optimizer: "Adam"
   batch_size: 4
-  num_epochs: 2
+  num_epochs: 20
 
   # Save a checkpoint periodically.
   save_every_epochs: 5
