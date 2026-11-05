@@ -1,0 +1,11 @@
+path: ./project_data/
+
+train: train/images/
+val: validation/images/
+test: test/images/
+
+names:
+  0: Aircraft
+  1: Building
+  2: Truck
+  3: Tank

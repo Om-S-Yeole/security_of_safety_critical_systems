@@ -1,0 +1,9 @@
+train_configs:
+  data: ./src/transferability/configs/dataset_balanced.yaml
+  epochs: 25
+  imgsz: 875
+  batch: -1
+  device: 0
+  workers: 8
+  project: transfer
+  name: balanced_1

@@ -1,0 +1,9 @@
+model_weights_path: ./runs/detect/transfer/balanced_1/weights/best.pt
+
+validate_configs:
+  data: ./src/transferability/configs/dataset_balanced.yaml
+  split: val
+  imgsz: 875
+  device: 0
+
+# val 20

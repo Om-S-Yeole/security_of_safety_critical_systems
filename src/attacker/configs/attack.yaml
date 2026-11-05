@@ -13,14 +13,12 @@ detector:
   confidence_threshold: 0.60
   iou_threshold: 0.70
 
-  # Detector weights remain fixed during patch optimization.
   freeze_weights: true
 
 # ------------------------------------------------------------
 # Dataset
 # ------------------------------------------------------------
 dataset:
-  # Change these paths to match your actual dataset structure.
   train_images: "project_data/balanced_split/train/images"
   train_labels: "project_data/balanced_split/train/labels"
 
@@ -39,7 +37,6 @@ dataset:
     - "Truck"
     - "Tank"
 
-  # The actual number of target objects may vary per image.
   shuffle: true
   num_workers: 4
 
@@ -52,18 +49,14 @@ attack:
   patch_type: "universal"
   patch_placement: "on_object"
 
-  # Initial patch dimensions, in pixels.
   patch:
     height: 150
     width: 150
-    # Scale each patch to at most this fraction of the target box dimensions.
-    # The patch is then randomly placed within the box.
     coverage: 0.15
     initialization: "uniform"
     min_pixel_value: 0.0
     max_pixel_value: 1.0
 
-  # Target objects belonging to the four dataset classes.
   target_classes: [0, 1, 2, 3]
 
 # ------------------------------------------------------------
@@ -75,10 +68,8 @@ optimization:
   batch_size: 4
   num_epochs: 20
 
-  # Save a checkpoint periodically.
   save_every_epochs: 5
 
-  # Numerical safeguards.
   gradient_clip_norm: 1.0
 
 # ------------------------------------------------------------
@@ -117,7 +108,6 @@ evaluation:
   evaluate_clean_images: true
   evaluate_transformed_images: true
   visualization:
-    # Save paired clean/attacked detector outputs after final validation.
     num_images: 5
 
   report:
