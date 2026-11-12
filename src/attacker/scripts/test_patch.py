@@ -21,8 +21,8 @@ from src.attacker.scripts.train_patch import (
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG = REPOSITORY_ROOT / "src/attacker/configs/attack.yaml"
 DEFAULT_PATCH = REPOSITORY_ROOT / "attacker/weights/patch_final.pt"
-DEFAULT_DETECTOR = REPOSITORY_ROOT / "detector/weights/best.pt"
-DEFAULT_OUTPUT = REPOSITORY_ROOT / "attacker/experiments/test_patch"
+DEFAULT_DETECTOR = REPOSITORY_ROOT / "detector/transferability/best.pt"
+DEFAULT_OUTPUT = REPOSITORY_ROOT / "attacker/experiments/test_transferability"
 
 
 def _resolve(path: str | Path) -> Path:

@@ -8,7 +8,8 @@ project:
 # Trained Object Detector
 # ------------------------------------------------------------
 detector:
-  model_path: "detector/weights/best.pt"
+  # model_path: "detector/weights/best.pt"
+  model_path: "detector/weights/tranferability/best.pt"
   image_size: 875
   confidence_threshold: 0.60
   iou_threshold: 0.70
